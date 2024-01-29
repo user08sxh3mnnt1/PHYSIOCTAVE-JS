@@ -1,0 +1,218 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>PHYSIOCTAVE-JS</title><style>body{display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;margin:0;font-family:Arial,sans-serif}#header{text-align:center;margin-bottom:20px}#siteName{font-size:24px;font-weight:700}#username{font-size:18px;color:#555}canvas{border:1px solid #000;background-color:#f0f0f0}#scaleInput{margin-top:10px;padding:8px;font-size:16px}#errorText{color:#e74c3c;margin-top:5px}button{margin-top:10px;padding:8px;font-size:16px;cursor:pointer;background-color:#3498db;color:#fff;border:none}</style></head><body><div id="header"><div id="siteName">PHYSIOCTAVE-JS</div><div id="username">bluepenguins drawing tool</div></div><canvas id="physicsCanvas" width="400" height="400"></canvas><label for="scaleInput">Insert Note Sequence (comma-separated):</label><input type="text" id="scaleInput" placeholder="C4,D4,E4,F4,G4,A4,B4"><button onclick="applyScale()">Apply Sequence</button><div id="errorText"></div><script>const canvas = document.getElementById('physicsCanvas');
+    const ctx = canvas.getContext('2d');
+    const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+
+    let scaleInput = document.getElementById('scaleInput');
+    let errorText = document.getElementById('errorText');
+
+    let musicalScale = Array.from({ length: 16 }, (_, i) => 'C' + (i % 7 + 4)); // Default to C major scale in the 4th octave
+    let scaleLength = musicalScale.length;
+    let octave = 4;
+
+    const pitchFrequencies = {
+      'C4': 261.63, 'C#4/Db4': 277.18, 'D4': 293.66, 'D#4/Eb4': 311.13, 'E4': 329.63,
+      'F4': 349.23, 'F#4/Gb4': 369.99, 'G4': 392.00, 'G#4/Ab4': 415.30, 'A4': 440.00,
+      'A#4/Bb4': 466.16, 'B4': 493.88, 'C5': 523.25, 'C#5/Db5': 554.37, 'D5': 587.33,
+      'D#5/Eb5': 622.25, 'E5': 659.25, 'F5': 698.46, 'F#5/Gb5': 739.99, 'G5': 783.99,
+      'G#5/Ab5': 830.61, 'A5': 880.00, 'A#5/Bb5': 932.33, 'B5': 987.77, 'C6': 1046.50,
+      'C#6/Db6': 1108.73, 'D6': 1174.66, 'D#6/Eb6': 1244.51, 'E6': 1318.51, 'F6': 1396.91,
+      'F#6/Gb6': 1479.98, 'G6': 1567.98, 'G#6/Ab6': 1661.22, 'A6': 1760.00, 'A#6/Bb6': 1864.66,
+      'B6': 1975.53, 'C7': 2093.00, 'C#7/Db7': 2217.46, 'D7': 2349.32, 'D#7/Eb7': 2489.02,
+      'E7': 2637.02, 'F7': 2793.83, 'F#7/Gb7': 2959.96, 'G7': 3135.96, 'G#7/Ab7': 3322.44,
+      'A7': 3520.00, 'A#7/Bb7': 3729.31, 'B7': 3951.07, 'C8': 4186.01 // Assuming it goes up to C8
+    };
+
+    let ball = {
+      x: canvas.width / 2,
+      y: canvas.height / 2,
+      radius: 10,
+      color: '#3498db',
+      velocityX: 0,
+      velocityY: 0,
+      isDragging: false,
+      initialVelocity: 0,
+      damping: 0.98,
+      currentNoteIndex: 0,
+    };
+
+    function createDynamicSineWave(frequency, duration, pan) {
+      if (frequency !== null) {
+        const oscillator = audioContext.createOscillator();
+        const panNode = audioContext.createStereoPanner();
+        const gainNode = audioContext.createGain();
+
+        oscillator.type = 'sine';
+        oscillator.frequency.setValueAtTime(frequency, audioContext.currentTime);
+
+        panNode.pan.value = pan;
+
+        oscillator.connect(panNode);
+        panNode.connect(gainNode);
+        gainNode.connect(audioContext.destination);
+
+        oscillator.start();
+        oscillator.stop(audioContext.currentTime + duration);
+      }
+    }
+
+    function drawBall() {
+      ctx.beginPath();
+      ctx.arc(ball.x, ball.y, ball.radius, 0, 2 * Math.PI);
+      ctx.fillStyle = ball.color;
+      ctx.fill();
+      ctx.closePath();
+    }
+
+    function drawDraggingLine() {
+      if (ball.isDragging) {
+        ctx.beginPath();
+        ctx.moveTo(ball.x, ball.y);
+        ctx.lineTo(canvas.mouseX, canvas.mouseY);
+        ctx.strokeStyle = '#e74c3c';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+        ctx.closePath();
+      }
+    }
+
+    function update() {
+      if (!ball.isDragging) {
+        ball.x += ball.velocityX;
+        ball.y += ball.velocityY;
+
+        ball.velocityX *= ball.damping;
+        ball.velocityY *= ball.damping;
+
+        if (ball.x + ball.radius > canvas.width) {
+          ball.x = canvas.width - ball.radius;
+          ball.velocityX = -Math.abs(ball.velocityX);
+          createDynamicSineWave(getNoteFrequency(), 0.1, 1);
+          changeScaleNote();
+        } else if (ball.x - ball.radius < 0) {
+          ball.x = ball.radius;
+          ball.velocityX = Math.abs(ball.velocityX);
+          createDynamicSineWave(getNoteFrequency(), 0.1, -1);
+          changeScaleNote();
+        }
+
+        if (ball.y + ball.radius > canvas.height) {
+          ball.y = canvas.height - ball.radius;
+          ball.velocityY = -Math.abs(ball.velocityY);
+          createDynamicSineWave(getNoteFrequency(), 0.1, 0);
+          changeScaleNote();
+        } else if (ball.y - ball.radius < 0) {
+          ball.y = ball.radius;
+          ball.velocityY = Math.abs(ball.velocityY);
+          createDynamicSineWave(getNoteFrequency(), 0.1, 0);
+          changeScaleNote();
+        }
+
+        if (Math.abs(ball.velocityX) < 0.1 && Math.abs(ball.velocityY) < 0.1) {
+          ball.x = canvas.width / 2;
+          ball.y = canvas.height / 2;
+          ball.currentNoteIndex = 0;
+        }
+      }
+    }
+
+    function calculateDampingFactor() {
+      const maxInitialVelocity = 10;
+      const dampingRange = 0.98 - 0.9;
+
+      const normalizedVelocity = Math.min(Math.abs(ball.initialVelocity) / maxInitialVelocity, 1);
+      return 0.98 - normalizedVelocity * dampingRange;
+    }
+
+    function getNoteFrequency() {
+      const note = musicalScale[ball.currentNoteIndex];
+      return pitchFrequencies[note] || null;
+    }
+
+    function changeScaleNote() {
+      let nextIndex = (ball.currentNoteIndex + 1) % scaleLength;
+      while (musicalScale[nextIndex] === 'skip' || musicalScale[nextIndex] === 'empty') {
+        nextIndex = (nextIndex + 1) % scaleLength;
+      }
+      ball.currentNoteIndex = nextIndex;
+    }
+
+    function clearCanvas() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+    }
+
+    function gameLoop() {
+      clearCanvas();
+      drawBall();
+      drawDraggingLine();
+      update();
+      requestAnimationFrame(gameLoop);
+    }
+
+    function applyScale() {
+      const inputScale = scaleInput.value.split(',').map(note => note.trim().toUpperCase());
+
+      if (inputScale.length > scaleLength) {
+        errorText.textContent = `Error! You inserted ${inputScale.length - scaleLength} extra notes. Our maximum step length is ${scaleLength}.`;
+        return;
+      }
+
+      errorText.textContent = '';
+
+      musicalScale = Array.from({ length: scaleLength }, (_, i) => inputScale[i] || 'skip');
+      scaleInput.value = musicalScale.join(', ');
+
+      ball.currentNoteIndex = 0; // Reset the current note index
+    }
+
+    canvas.addEventListener('mousedown', (event) => {
+      const rect = canvas.getBoundingClientRect();
+      ball.isDragging = true;
+      ball.velocityX = 0;
+      ball.velocityY = 0;
+      ball.x = event.clientX - rect.left;
+      ball.y = event.clientY - rect.top;
+      ball.currentNoteIndex = 0; // Reset the current note index
+    });
+
+    canvas.addEventListener('mouseup', () => {
+      ball.isDragging = false;
+    });
+
+    canvas.addEventListener('mousemove', (event) => {
+      if (ball.isDragging) {
+        const rect = canvas.getBoundingClientRect();
+        canvas.mouseX = event.clientX - rect.left;
+        canvas.mouseY = event.clientY - rect.top;
+
+        ball.velocityX = (canvas.mouseX - ball.x) * 0.1;
+        ball.velocityY = (canvas.mouseY - ball.y) * 0.1;
+      }
+    });
+
+    canvas.addEventListener('touchstart', (event) => {
+      event.preventDefault();
+      const rect = canvas.getBoundingClientRect();
+      ball.isDragging = true;
+      ball.velocityX = 0;
+      ball.velocityY = 0;
+      ball.x = event.touches[0].clientX - rect.left;
+      ball.y = event.touches[0].clientY - rect.top;
+      ball.currentNoteIndex = 0; // Reset the current note index
+    });
+
+    canvas.addEventListener('touchend', () => {
+      ball.isDragging = false;
+    });
+
+    canvas.addEventListener('touchmove', (event) => {
+      event.preventDefault();
+      if (ball.isDragging) {
+        const rect = canvas.getBoundingClientRect();
+        canvas.mouseX = event.touches[0].clientX - rect.left;
+        canvas.mouseY = event.touches[0].clientY - rect.top;
+        ball.velocityX = (canvas.mouseX - ball.x) * 0.1;
+        ball.velocityY = (canvas.mouseY - ball.y) * 0.1;
+      }
+    });
+
+    gameLoop();</script></body></html>
